@@ -46,7 +46,7 @@ alembic downgrade base
    ```bash
    alembic revision --autogenerate -m "add user table"
    ```
-3. **Review the generated file** in `alembic/versions/`
+3. **Review the generated file** in `migrations/versions/`
 4. **Edit if needed** - autogenerate may not catch everything:
    - Data migrations
    - Index renames

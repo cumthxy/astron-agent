@@ -36,10 +36,10 @@ def run_database_migration() -> None:
 
     This function runs database migrations to ensure the database schema is up-to-date.
     Uses Redis distributed lock to prevent multiple instances from running migrations simultaneously.
-    Database URL is configured from environment variables in alembic/env.py.
+    Database URL is configured from environment variables in migrations/env.py.
     """
     workflow_dir = Path(__file__).parent.parent.parent.parent
-    alembic_dir = workflow_dir / "alembic"
+    alembic_dir = workflow_dir / "migrations"
     alembic_ini = alembic_dir / "alembic.ini"
     if not alembic_ini.exists():
         logging.error(f"alembic.ini not found: {alembic_ini}")

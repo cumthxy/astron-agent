@@ -1,12 +1,11 @@
 import os
 from typing import Literal
 
+from alembic import context  # type: ignore[attr-defined]
 from loguru import logger
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.sql.schema import SchemaItem
 from sqlmodel import SQLModel
-
-from alembic import context  # type: ignore[attr-defined]
 
 # Import all models for SQLModel metadata registration
 from workflow.configs import workflow_config  # noqa: F401

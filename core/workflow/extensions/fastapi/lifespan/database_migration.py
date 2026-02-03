@@ -8,10 +8,10 @@ during FastAPI application startup to ensure the database schema is up-to-date.
 import logging
 from pathlib import Path
 
-from sqlalchemy.exc import OperationalError
-
 from alembic import command  # type: ignore[attr-defined]
 from alembic.config import Config
+from sqlalchemy.exc import OperationalError
+
 from workflow.extensions.middleware.getters import get_cache_service
 
 # Migration constants

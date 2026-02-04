@@ -219,15 +219,15 @@ jobs:
                 uv sync
                 echo "🔍 Running Python quality checks..."
                 echo "1. Running flake8 code style check..."
-                uv run python -m flake8 --max-line-length 88 --ignore=E203,W503,E501 --max-complexity 10 .
+                uv run python -m flake8 --max-line-length 88 --ignore=E203,W503,E501 --max-complexity 10 . --exclude=.venv
                 echo "2. Checking isort import order..."
-                uv run python -m isort --check-only --profile black .
+                uv run python -m isort --check-only --profile black . --exclude=.venv
                 echo "3. Checking black code format..."
-                uv run python -m black --check .
+                uv run python -m black --check . --exclude=.venv
                 echo "4. Running mypy type checking..."
                 uv run python -m mypy --exclude=.venv --disallow-untyped-defs --disallow-incomplete-defs --check-untyped-defs --no-implicit-optional .
                 echo "5. Running pylint code analysis..."
-                find . -name "*.py" -type f -print0 | xargs -0 uv run python -m pylint --disable=import-error --max-line-length=88 --max-args=7 --max-locals=15 --max-returns=6 --max-branches=12 --max-statements=50 --fail-under=8.0
+                find . -name "*.py" -type f -print0 | xargs -0 uv run python -m pylint --disable=import-error --max-line-length=88 --max-args=7 --max-locals=15 --max-returns=6 --max-branches=12 --max-statements=50 --fail-under=8.0 --exclude=.venv
               fi
               ;;
           esac

@@ -73,16 +73,18 @@ class EndNode(BaseOutputNode):
                 "node_run_status", {}
             )
 
+            callbacks: ChatCallBacks = cast(ChatCallBacks, kwargs.get("callbacks"))
+
+            # Notify callbacks that node execution has started before waiting,
+            # so elapsed time includes the wait for prerequisite nodes
+            await callbacks.on_node_start(
+                code=0, node_id=self.node_id, alias_name=self.alias_name
+            )
+
             # Wait for all prerequisite output nodes to complete
             await self.await_pre_output_node_complete(
                 msg_or_end_node_deps=msg_or_end_node_deps,
                 node_run_status=node_run_status,
-            )
-            callbacks: ChatCallBacks = cast(ChatCallBacks, kwargs.get("callbacks"))
-
-            # Notify callbacks that node execution has started
-            await callbacks.on_node_start(
-                code=0, node_id=self.node_id, alias_name=self.alias_name
             )
 
             # Process output in prompt mode if configured

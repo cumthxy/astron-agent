@@ -6,7 +6,7 @@ including document splitting, knowledge chunk saving, updating, deleting, queryi
 """
 
 import json
-from typing import Any, Callable, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from common.otlp.metrics.meter import Meter
 from common.otlp.trace.span import Span
@@ -179,6 +179,9 @@ async def file_split(
             separator=split_request.separator,
             titleSplit=split_request.titleSplit,
             cutOff=split_request.cutOff,
+            document_id=split_request.documentId,
+            group=split_request.group,
+            groupDescription=split_request.groupDescription,
         )
 
 
@@ -226,6 +229,28 @@ async def file_upload(
     separator: Optional[str] = Form(
         None, description='Delimiter JSON array, such as ["\\n", ". "]'
     ),
+    documentId: Optional[str] = Form(
+        None,
+        description=(
+            "Existing RAGFlow doc id, triggers blue-green upsert. "
+            "Omit or leave empty for first-time slicing."
+        ),
+    ),
+    group: Optional[str] = Form(
+        None,
+        description=(
+            "RAGFlow dataset group (coreRepoId for Ragflow-RAG). "
+            "When omitted, falls back to the default dataset."
+        ),
+    ),
+    groupDescription: Optional[str] = Form(
+        None,
+        description=(
+            "Human-readable label written into RAGFlow dataset description "
+            "on first creation; helps operators identify the dataset in the "
+            "RAGFlow UI without resolving UUIDs."
+        ),
+    ),
     app_id: str = Depends(get_app_id),
 ) -> Union[SuccessDataResponse, ErrorResponse]:
     """
@@ -238,6 +263,10 @@ async def file_upload(
         ragType: RAG type (form-data mode)
         lengthRange: Split length range as JSON string (form-data mode)
         separator: Separator list as JSON string (form-data mode)
+        documentId: Existing RAGFlow doc id for re-slice upsert (form-data mode)
+        group: RAGFlow dataset group (form-data mode)
+        groupDescription: Human-readable label written into the RAGFlow dataset
+            description on first creation (form-data mode)
         app_id: Application identifier
 
     Returns:
@@ -255,6 +284,9 @@ async def file_upload(
                         "ragType": ragType,
                         "lengthRange": lengthRange,
                         "separator": separator,
+                        "documentId": documentId,
+                        "group": group,
+                        "groupDescription": groupDescription,
                     },
                     ensure_ascii=False,
                 )
@@ -284,6 +316,9 @@ async def file_upload(
             file=file,
             lengthRange=parsed_length_range,
             separator=parsed_separator,
+            document_id=documentId,
+            group=group,
+            groupDescription=groupDescription,
         )
 
 
@@ -384,6 +419,7 @@ async def chunk_delete(
             operation_callable=strategy.chunks_delete,
             docId=delete_request.docId,
             chunkIds=delete_request.chunkIds,
+            group=delete_request.group,
         )
 
 
@@ -408,22 +444,36 @@ async def chunk_query(
         span_context.add_info_events(
             {"usr_input": json.dumps(request_dict, ensure_ascii=False)}
         )
+        span_context.add_info_events({"rewrite_enabled": str(query_request.rewrite)})
+
         strategy = RAGStrategyFactory.get_strategy(query_request.ragType)
 
-        new_query = await rewrite_query(
-            query_request.query, history=query_request.history, span=span_context
+        # rewrite=False sends the raw query (for keyword/highlight matching).
+        effective_query = (
+            await rewrite_query(
+                query_request.query, history=query_request.history, span=span_context
+            )
+            if query_request.rewrite
+            else query_request.query
         )
+
+        # Only forward ragflow_ext when set, so other strategies' kwargs
+        # stay unchanged.
+        extra_kwargs: Dict[str, Any] = {}
+        if query_request.ragflow_ext is not None:
+            extra_kwargs["ragflow_ext"] = query_request.ragflow_ext
 
         return await handle_rag_operation(
             span_context=span_context,
             metric=metric,
             operation_callable=strategy.query,
-            query=new_query,
+            query=effective_query,
             doc_ids=query_request.match.docIds,
             repo_ids=query_request.match.repoId,
             top_k=query_request.topN,
             threshold=query_request.match.threshold,
             flow_id=query_request.match.flowId,
+            **extra_kwargs,
         )
 
 
@@ -452,6 +502,7 @@ async def query_doc(
             metric=metric,
             operation_callable=strategy.query_doc,
             docId=query_request.docId,
+            group=query_request.group,
         )
 
 
@@ -480,4 +531,5 @@ async def query_doc_name(
             metric=metric,
             operation_callable=strategy.query_doc_name,
             docId=query_request.docId,
+            group=query_request.group,
         )

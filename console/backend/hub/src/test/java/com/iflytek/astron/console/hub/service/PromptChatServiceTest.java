@@ -148,9 +148,9 @@ class PromptChatServiceTest {
         request.put("model", "gemini-3.1-pro");
         request.put("messages", JSON.parseArray(
                 "[\n" +
-                "  {\"role\":\"system\",\"content\":\"You are helpful.\"},\n" +
-                "  {\"role\":\"user\",\"content\":\"Hello\"}\n" +
-                "]"));
+                        "  {\"role\":\"system\",\"content\":\"You are helpful.\"},\n" +
+                        "  {\"role\":\"user\",\"content\":\"Hello\"}\n" +
+                        "]"));
         request.put("url", "https://example.com/v1beta/models/gemini-3.1-pro:generateContent");
 
         when(httpClient.newCall(any(Request.class))).thenReturn(call);
@@ -196,9 +196,13 @@ class PromptChatServiceTest {
                 JSONObject body = parseRequestBody(req);
                 assertFalse(body.containsKey("managedSearchQuery"));
                 assertFalse(body.containsKey("userId"));
-                assertTrue(body.getJSONArray("messages").getJSONObject(0).getString("content")
+                assertTrue(body.getJSONArray("messages")
+                        .getJSONObject(0)
+                        .getString("content")
                         .contains("managed real-time web search"));
-                assertTrue(body.getJSONArray("messages").getJSONObject(0).getString("content")
+                assertTrue(body.getJSONArray("messages")
+                        .getJSONObject(0)
+                        .getString("content")
                         .contains("Search summary with [1]"));
             } catch (IOException e) {
                 fail(e);
@@ -455,19 +459,23 @@ class PromptChatServiceTest {
 
             promptChatService.chatStream(request, emitter, streamId, chatReqRecords, false, true);
 
-            when(response.isSuccessful()).thenReturn(true);
-            when(response.body()).thenReturn(responseBody);
+            MediaType mediaType = MediaType.get("text/event-stream; charset=utf-8");
+            lenient().when(response.isSuccessful()).thenReturn(true);
+            lenient().when(response.body()).thenReturn(responseBody);
+            lenient().when(responseBody.contentType()).thenReturn(mediaType);
 
+            // Mock BufferedSource that throws IOException on read
             BufferedSource mockSource = mock(BufferedSource.class);
-            when(responseBody.source()).thenReturn(mockSource);
-            when(mockSource.readUtf8Line()).thenThrow(new IOException("Read error"));
+            lenient().when(responseBody.source()).thenReturn(mockSource);
+            lenient().when(mockSource.readUtf8Line()).thenThrow(new IOException("Read error"));
 
             sseUtilMock.when(() -> SseEmitterUtil.isStreamStopped(streamId)).thenReturn(false);
 
             Callback callback = callbackCaptor.getValue();
             callback.onResponse(call, response);
 
-            sseUtilMock.verify(() -> SseEmitterUtil.completeWithError(eq(emitter), contains("Data reading exception")));
+            // Verify that completeWithError was called with the expected error message
+            sseUtilMock.verify(() -> SseEmitterUtil.completeWithError(emitter, "Data reading exception: Read error"));
         }
     }
 
@@ -771,17 +779,25 @@ class PromptChatServiceTest {
 
             promptChatService.chatStream(request, emitter, streamId, chatReqRecords, false, true);
 
-            when(response.isSuccessful()).thenReturn(true);
-            when(response.body()).thenReturn(responseBody);
+            // Stub contentType to trigger SSE stream reading path
+            MediaType mediaType = MediaType.get("text/event-stream; charset=utf-8");
+            lenient().when(response.isSuccessful()).thenReturn(true);
+            lenient().when(response.body()).thenReturn(responseBody);
+            lenient().when(responseBody.contentType()).thenReturn(mediaType);
 
-            BufferedSource mockSource = mock(BufferedSource.class);
-            when(responseBody.source()).thenReturn(mockSource);
-            when(mockSource.readUtf8Line()).thenReturn("data: test").thenReturn(null);
+            // Use a real Buffer for SSE data
+            Buffer buffer = new Buffer();
+            buffer.writeUtf8("data: {\"id\":\"test\"}\n");
+            buffer.writeUtf8("data: [DONE]\n");
+            lenient().when(responseBody.source()).thenReturn(buffer);
 
-            // Simulate stop signal after first read
+            // isStreamStopped: 1st=false (loop entry), 2nd=false (after data), 3rd=true (after [DONE] check)
             sseUtilMock.when(() -> SseEmitterUtil.isStreamStopped(streamId))
                     .thenReturn(false)
+                    .thenReturn(false)
                     .thenReturn(true);
+            // Stub static methods that get called during stream handling
+            sseUtilMock.when(() -> SseEmitterUtil.completeWithError(any(SseEmitter.class), anyString())).thenAnswer(inv -> null);
 
             doNothing().when(emitter).send(any(SseEmitter.SseEventBuilder.class));
             doNothing().when(emitter).complete();

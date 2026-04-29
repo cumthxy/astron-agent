@@ -67,6 +67,7 @@ import com.iflytek.astron.console.toolkit.entity.table.relation.FlowDbRel;
 import com.iflytek.astron.console.toolkit.entity.table.relation.FlowRepoRel;
 import com.iflytek.astron.console.toolkit.entity.table.relation.FlowToolRel;
 import com.iflytek.astron.console.toolkit.entity.table.repo.FileInfoV2;
+import com.iflytek.astron.console.toolkit.entity.dto.skill.SkillImportDto;
 import com.iflytek.astron.console.toolkit.entity.table.tool.*;
 import com.iflytek.astron.console.toolkit.entity.table.workflow.*;
 import com.iflytek.astron.console.toolkit.entity.tool.McpServerTool;
@@ -90,6 +91,7 @@ import com.iflytek.astron.console.toolkit.service.extra.AppService;
 import com.iflytek.astron.console.toolkit.service.extra.CoreSystemService;
 import com.iflytek.astron.console.toolkit.service.extra.OpenPlatformService;
 import com.iflytek.astron.console.toolkit.service.model.ModelService;
+import com.iflytek.astron.console.toolkit.service.skill.SkillFileService;
 import com.iflytek.astron.console.toolkit.sse.WorkflowSseEventSourceListener;
 import com.iflytek.astron.console.toolkit.tool.DataPermissionCheckTool;
 import com.iflytek.astron.console.toolkit.tool.JsonConverter;
@@ -258,6 +260,8 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
     private FlowDbRelMapper flowDbRelMapper;
     @Autowired
     private DbTableMapper dbTableMapper;
+    @Autowired
+    private SkillFileService skillFileService;
     @Autowired
     private ToolBoxMapper toolBoxMapper;
     @Autowired
@@ -2341,12 +2345,74 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
         // (2.1) MCP: copy mcpServerIds to mcpServerUrls
         copyMcpServerIdsToUrls(plugin);
 
-        // (2.2) Knowledge: aggregate docIds based on repoIds
+        // (2.2) Skills: inject stable metadata and on-demand download urls
+        enrichSkills(plugin);
+
+        // (2.3) Knowledge: aggregate docIds based on repoIds
         JSONArray knowledgeArray = plugin.getJSONArray("knowledge");
         if (knowledgeArray == null || knowledgeArray.isEmpty()) {
             return;
         }
         enrichKnowledgeDocIds(knowledgeArray);
+    }
+
+    @SuppressWarnings("rawtypes")
+    private void enrichSkills(JSONObject plugin) {
+        JSONArray skillArray = plugin.getJSONArray("skills");
+        if (skillArray == null || skillArray.isEmpty()) {
+            return;
+        }
+        List<Long> skillIds = new ArrayList<>();
+        for (int i = 0; i < skillArray.size(); i++) {
+            Object obj = skillArray.get(i);
+            if (!(obj instanceof Map skillObj)) {
+                continue;
+            }
+            Object skillIdObj = skillObj.get("skillId");
+            if (skillIdObj == null) {
+                skillIdObj = skillObj.get("id");
+            }
+            if (skillIdObj == null) {
+                continue;
+            }
+            try {
+                skillIds.add(Long.parseLong(String.valueOf(skillIdObj)));
+            } catch (NumberFormatException ex) {
+                log.warn("Ignore invalid skill id: {}", skillIdObj);
+            }
+        }
+        if (skillIds.isEmpty()) {
+            return;
+        }
+        Map<Long, SkillImportDto> importMap = skillFileService.getSkillImportsByIds(skillIds).stream()
+                .collect(Collectors.toMap(SkillImportDto::getId, item -> item, (a, b) -> a));
+        for (int i = 0; i < skillArray.size(); i++) {
+            Object obj = skillArray.get(i);
+            if (!(obj instanceof Map skillObj)) {
+                continue;
+            }
+            Object skillIdObj = skillObj.get("skillId");
+            if (skillIdObj == null) {
+                skillIdObj = skillObj.get("id");
+            }
+            if (skillIdObj == null) {
+                continue;
+            }
+            try {
+                Long skillId = Long.parseLong(String.valueOf(skillIdObj));
+                SkillImportDto importDto = importMap.get(skillId);
+                if (importDto == null) {
+                    continue;
+                }
+                skillObj.put("skillId", String.valueOf(importDto.getId()));
+                skillObj.put("name", StringUtils.defaultString(importDto.getName()));
+                skillObj.put("description", StringUtils.defaultString(importDto.getDescription()));
+                skillObj.put("downloadUrl", StringUtils.defaultString(importDto.getDownloadUrl()));
+                skillObj.put("resources", importDto.getResources());
+            } catch (NumberFormatException ex) {
+                log.warn("Ignore invalid skill id while enriching: {}", skillIdObj);
+            }
+        }
     }
 
     /** Check whether it is an AGENT node and has valid metadata */
@@ -2485,8 +2551,11 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
                 .fluentPut("name", saveDto.getName())
                 .fluentPut("description", saveDto.getDescription())
                 .fluentPut("status", saveDto.getStatus());
+        JSONObject protocolJson = null;
         if (protocol != null) {
-            jsonObject.fluentPut("data", protocol);
+            protocolJson = JSON.parseObject(JSON.toJSONString(protocol));
+            removeWorkflowUiValidationFields(protocolJson);
+            jsonObject.fluentPut("data", protocolJson);
         }
         String body = jsonObject.toString();
 
@@ -2503,7 +2572,22 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
         // Flow protocol temporary storage
         saveFlowProtocolTemp(flowId,
                 saveDto.getData() == null ? null : JSON.toJSONString(saveDto.getData()),
-                saveDto.getData() == null ? null : JSON.toJSONString(protocol.getData()));
+                protocolJson == null || protocolJson.get("data") == null ? null : JSON.toJSONString(protocolJson.get("data")));
+    }
+
+    private void removeWorkflowUiValidationFields(Object value) {
+        if (value instanceof JSONObject jsonObject) {
+            jsonObject.remove("setAnswerContentErrMsg");
+            for (Object child : jsonObject.values()) {
+                removeWorkflowUiValidationFields(child);
+            }
+            return;
+        }
+        if (value instanceof JSONArray jsonArray) {
+            for (Object child : jsonArray) {
+                removeWorkflowUiValidationFields(child);
+            }
+        }
     }
 
     private Property bizPropertyToProperty(BizProperty bizProperty) {
@@ -3921,8 +4005,8 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
             workflowReq.setExt(JSON.parseObject(workflow.getExt()));
         }
         if (StringUtils.isNotBlank(workflow.getAdvancedConfig())) {
-            workflowReq.setAdvancedConfig(JSON.parseObject(workflow.getAdvancedConfig(), new TypeReference<Map<String, Object>>() {
-            }));
+            workflowReq.setAdvancedConfig(
+                    JSON.parseObject(workflow.getAdvancedConfig(), new TypeReference<Map<String, Object>>() {}));
         }
         return workflowReq;
     }

@@ -18,6 +18,7 @@ from knowledge.domain.entity.chunk_dto import (
     FileSplitReq,
     QueryDocReq,
     QueryMatch,
+    RagflowQueryExt,
     RAGType,
 )
 
@@ -74,6 +75,48 @@ class TestFileSplitReq:
         field_names = [error["loc"][0] for error in errors]
         assert "file" in field_names
         assert "ragType" in field_names
+
+    def test_document_id_default_none(self) -> None:
+        """Test documentId defaults to None for first-time slicing."""
+        req = FileSplitReq(file="test content", ragType=RAGType.RagFlow_RAG)
+        assert req.documentId is None
+
+    def test_document_id_accepts_string(self) -> None:
+        """Test documentId accepts existing RAGFlow doc id for re-slice upsert."""
+        req = FileSplitReq(
+            file="test content",
+            ragType=RAGType.RagFlow_RAG,
+            documentId="doc-abc-123",
+        )
+        assert req.documentId == "doc-abc-123"
+
+    def test_group_default_none(self) -> None:
+        """FileSplitReq.group is Optional, default None for backward compat."""
+        req = FileSplitReq(file="test content", ragType=RAGType.RagFlow_RAG)
+        assert req.group is None
+
+    def test_group_accepts_string(self) -> None:
+        """FileSplitReq.group accepts explicit RAGFlow dataset group/name."""
+        req = FileSplitReq(
+            file="test content",
+            ragType=RAGType.RagFlow_RAG,
+            group="abc-uuid",
+        )
+        assert req.group == "abc-uuid"
+
+    def test_group_description_default_none(self) -> None:
+        """FileSplitReq.groupDescription is Optional, default None."""
+        req = FileSplitReq(file="test content", ragType=RAGType.RagFlow_RAG)
+        assert req.groupDescription is None
+
+    def test_group_description_accepts_string(self) -> None:
+        """FileSplitReq.groupDescription accepts a human-readable label."""
+        req = FileSplitReq(
+            file="test content",
+            ragType=RAGType.RagFlow_RAG,
+            groupDescription="客服知识库",
+        )
+        assert req.groupDescription == "客服知识库"
 
 
 class TestChunkSaveReq:
@@ -195,6 +238,21 @@ class TestChunkDeleteReq:
         """Test with empty chunk IDs list."""
         req = ChunkDeleteReq(docId="doc123", chunkIds=[], ragType=RAGType.AIUI_RAG2)
         assert req.chunkIds == []
+
+    def test_group_default_none(self) -> None:
+        """ChunkDeleteReq.group is Optional, default None for backward compat."""
+        req = ChunkDeleteReq(docId="doc123", ragType=RAGType.RagFlow_RAG)
+        assert req.group is None
+
+    def test_group_accepts_string(self) -> None:
+        """ChunkDeleteReq.group accepts explicit RAGFlow dataset group/name."""
+        req = ChunkDeleteReq(
+            docId="doc123",
+            chunkIds=["c1"],
+            ragType=RAGType.RagFlow_RAG,
+            group="abc-uuid",
+        )
+        assert req.group == "abc-uuid"
 
 
 class TestQueryMatch:
@@ -359,6 +417,16 @@ class TestQueryDocReq:
         assert "docId" in field_names
         assert "ragType" in field_names
 
+    def test_group_default_none(self) -> None:
+        """group is Optional, default None for backward compat."""
+        req = QueryDocReq(docId="doc123", ragType=RAGType.RagFlow_RAG)
+        assert req.group is None
+
+    def test_group_accepts_string(self) -> None:
+        """group accepts explicit string value."""
+        req = QueryDocReq(docId="doc123", ragType=RAGType.RagFlow_RAG, group="abc-uuid")
+        assert req.group == "abc-uuid"
+
 
 class TestIntegrationCases:
     """Test integration scenarios with multiple models."""
@@ -433,3 +501,141 @@ class TestIntegrationCases:
             # Should have both query and topN errors
             assert has_query_error
             assert has_topn_error
+
+
+class TestRagflowQueryExt:
+    """Test RagflowQueryExt DTO field constraints."""
+
+    def test_all_fields_optional_empty_instance_is_valid(self) -> None:
+        ext = RagflowQueryExt()
+        assert ext.top_k is None
+        assert ext.vector_similarity_weight is None
+        assert ext.keyword is None
+        assert ext.rerank_id is None
+        assert ext.highlight is None
+        assert ext.use_kg is None
+
+    def test_top_k_accepts_boundary_values(self) -> None:
+        RagflowQueryExt(top_k=1)
+        RagflowQueryExt(top_k=200)
+
+    def test_top_k_rejects_zero(self) -> None:
+        with pytest.raises(ValidationError):
+            RagflowQueryExt(top_k=0)
+
+    def test_top_k_rejects_above_200(self) -> None:
+        with pytest.raises(ValidationError):
+            RagflowQueryExt(top_k=201)
+
+    def test_vsw_accepts_boundary_values(self) -> None:
+        RagflowQueryExt(vector_similarity_weight=0)
+        RagflowQueryExt(vector_similarity_weight=1)
+
+    def test_vsw_rejects_negative(self) -> None:
+        with pytest.raises(ValidationError):
+            RagflowQueryExt(vector_similarity_weight=-0.1)
+
+    def test_vsw_rejects_above_1(self) -> None:
+        with pytest.raises(ValidationError):
+            RagflowQueryExt(vector_similarity_weight=1.1)
+
+    def test_rerank_id_rejects_empty_string(self) -> None:
+        with pytest.raises(ValidationError):
+            RagflowQueryExt(rerank_id="")
+
+    def test_rerank_id_accepts_non_empty(self) -> None:
+        ext = RagflowQueryExt(rerank_id="bge-reranker-v2-m3")
+        assert ext.rerank_id == "bge-reranker-v2-m3"
+
+    def test_bool_fields_accept_true_and_false(self) -> None:
+        ext = RagflowQueryExt(keyword=True, highlight=False, use_kg=True)
+        assert ext.keyword is True
+        assert ext.highlight is False
+        assert ext.use_kg is True
+
+
+class TestChunkQueryReqDefaults:
+    """Test new default fields on ChunkQueryReq."""
+
+    def _base_kwargs(self) -> dict:
+        return {
+            "query": "test",
+            "topN": 3,
+            "match": QueryMatch(repoId=["repo_1"]),
+            "ragType": RAGType.RagFlow_RAG,
+        }
+
+    def test_rewrite_defaults_to_true(self) -> None:
+        req = ChunkQueryReq(**self._base_kwargs())
+        assert req.rewrite is True
+
+    def test_rewrite_can_be_set_false(self) -> None:
+        req = ChunkQueryReq(**self._base_kwargs(), rewrite=False)
+        assert req.rewrite is False
+
+    def test_ragflow_ext_defaults_to_none(self) -> None:
+        req = ChunkQueryReq(**self._base_kwargs())
+        assert req.ragflow_ext is None
+
+    def test_ragflow_ext_accepts_partial_object(self) -> None:
+        req = ChunkQueryReq(
+            **self._base_kwargs(),
+            ragflow_ext=RagflowQueryExt(top_k=50),
+        )
+        assert req.ragflow_ext is not None
+        assert req.ragflow_ext.top_k == 50
+        assert req.ragflow_ext.highlight is None
+
+
+class TestChunkQueryReqScopeValidator:
+    """Test cross-field validator: ragflow_ext requires ragType=Ragflow-RAG."""
+
+    def _kwargs_for(self, rag_type: RAGType) -> dict:
+        return {
+            "query": "test",
+            "topN": 3,
+            "match": QueryMatch(repoId=["repo_1"]),
+            "ragType": rag_type,
+        }
+
+    def test_ragflow_ext_allowed_with_ragflow_rag(self) -> None:
+        req = ChunkQueryReq(
+            **self._kwargs_for(RAGType.RagFlow_RAG),
+            ragflow_ext=RagflowQueryExt(top_k=50),
+        )
+        assert req.ragflow_ext is not None
+        assert req.ragflow_ext.top_k == 50
+
+    def test_ragflow_ext_rejected_with_aiui(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            ChunkQueryReq(
+                **self._kwargs_for(RAGType.AIUI_RAG2),
+                ragflow_ext=RagflowQueryExt(top_k=50),
+            )
+        assert "ragflow_ext is only allowed when ragType='Ragflow-RAG'" in str(
+            exc_info.value
+        )
+
+    def test_ragflow_ext_rejected_with_cbg(self) -> None:
+        with pytest.raises(ValidationError):
+            ChunkQueryReq(
+                **self._kwargs_for(RAGType.CBG_RAG),
+                ragflow_ext=RagflowQueryExt(top_k=50),
+            )
+
+    def test_ragflow_ext_rejected_with_sparkdesk(self) -> None:
+        with pytest.raises(ValidationError):
+            ChunkQueryReq(
+                **self._kwargs_for(RAGType.SparkDesk_RAG),
+                ragflow_ext=RagflowQueryExt(top_k=50),
+            )
+
+    def test_none_ragflow_ext_allowed_with_any_ragtype(self) -> None:
+        for rag_type in (
+            RAGType.AIUI_RAG2,
+            RAGType.CBG_RAG,
+            RAGType.SparkDesk_RAG,
+            RAGType.RagFlow_RAG,
+        ):
+            req = ChunkQueryReq(**self._kwargs_for(rag_type))
+            assert req.ragflow_ext is None

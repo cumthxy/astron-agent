@@ -587,6 +587,7 @@ const useNodeOutputRender = ({ id, data }): UseNodeOutputRenderReturn => {
         return;
       }
       setNode(id, old => {
+        old.data.nodeParam.setAnswerContentErrMsg = '';
         if (old?.data?.retryConfig) {
           const newSetAnswerContent = JSON.stringify(
             generateOrUpdateObject(
@@ -599,7 +600,6 @@ const useNodeOutputRender = ({ id, data }): UseNodeOutputRenderReturn => {
             2
           );
           old.data.retryConfig.customOutput = newSetAnswerContent;
-          old.data.nodeParam.setAnswerContentErrMsg = '';
         }
         return {
           ...cloneDeep(old),
@@ -712,8 +712,8 @@ const useNodeModels = ({ id, data }): UseNodeModelsReturn => {
     return models?.find(item => item?.llmId === data?.nodeParam?.llmId);
   }, [data?.nodeParam?.llmId, models]);
   const isThinkModel = useMemo(() => {
-    return data?.nodeParam?.isThink;
-  }, [data?.nodeParam?.isThink]);
+    return model?.isThink === true || data?.nodeParam?.isThink === true;
+  }, [model?.isThink, data?.nodeParam?.isThink]);
   return {
     models,
     model,
